@@ -45,6 +45,8 @@ require_login();
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class section_select_form extends moodleform {
+    /** Int array of allowed values */
+    protected $allowedvalues = [];
 
     /**
      * Form definition.
@@ -100,47 +102,79 @@ class section_select_form extends moodleform {
         $targetsections = array_slice($targetsections, 0, $targetsectionnum + 1);
 
         // Check for permissions.
-        $canaddsection = has_capability('moodle/course:update', \context_course::instance($targetcourseid));
+        $canaddsection = massactionutils::can_add_section($targetcourseid, $targetformat->get_format());
 
         // Find maximum section that may need to be created.
         $massactionrequest = $this->_customdata['request'];
-        $data = \block_massaction\massactionutils::extract_modules_from_json($massactionrequest);
+        $data = massactionutils::extract_modules_from_json($massactionrequest);
         $modules = $data->modulerecords;
         $srcmaxsectionnum = max(array_map(function($mod) use ($sourcecoursemodinfo) {
             return $sourcecoursemodinfo->get_cm($mod->id)->sectionnum;
         }, $modules));
 
         $radioarray = [];
+
+        // Attributes for radio buttons.
+        $attributes = ['class' => 'mt-2'];
+
         // If user can add sections in target course or don't need to be able to.
-        if ($canaddsection || $srcmaxsectionnum <= $targetsectionnum) {
-            // We add the default value: Restore each course module to the section number it has in the source course.
-            $radioarray[] = $mform->createElement('radio', 'targetsectionnum', '',
-            get_string('keepsectionnum', 'block_massaction'), -1, ['class' => 'mt-2']);
-        }
+        $cankeeporiginalsectionnum = ($canaddsection || $srcmaxsectionnum <= $targetsectionnum)
+            && massactionutils::can_keep_original_section_number($targetcourseid, $targetformat->get_format());
+        $this->is_allowed($cankeeporiginalsectionnum, -1, $attributes);
+        $radioarray[] = $mform->createElement('radio', 'targetsectionnum', '',
+            get_string('keepsectionnum', 'block_massaction'), -1, $attributes);
 
         $sectionsrestricted = massactionutils::get_restricted_sections($targetcourseid, $targetformat->get_format());
         // Now add the sections of the target course.
         foreach ($targetsections as $sectionnum => $sectionname) {
-            $attributes = ['class' => 'mt-2'];
-            if (in_array($sectionnum, $sectionsrestricted)) {
-                $attributes['disabled'] = 'disabled';
-            }
+            $this->is_allowed(!in_array($sectionnum, $sectionsrestricted), $sectionnum, $attributes);
             $radioarray[] = $mform->createElement('radio', 'targetsectionnum',
                 '', $sectionname, $sectionnum, $attributes);
         }
 
-        if ($canaddsection) {
-            if (($targetsectionnum + 1) <= $targetformat->get_max_sections()) {
-                // New section option.
-                $radioarray[] = $mform->createElement('radio', 'targetsectionnum', '',
-                    get_string('newsection', 'block_massaction'), $targetsectionnum + 1, ['class' => 'mt-2']);
-            }
-        }
+        // Whether user can add new section.
+        $canaddnewsection = $canaddsection && ($targetsectionnum + 1) <= $targetformat->get_max_sections();
+        $this->is_allowed($canaddnewsection, $targetsectionnum + 1, $attributes);
+        $radioarray[] = $mform->createElement('radio', 'targetsectionnum', '',
+            get_string('newsection', 'block_massaction'), $targetsectionnum + 1, $attributes);
+
 
         $mform->addGroup($radioarray, 'sections', get_string('choosesectiontoduplicateto', 'block_massaction'),
             '<br/>', false);
-        $mform->setDefault('targetsectionnum', -1);
+        $mform->setDefault('targetsectionnum', reset($this->allowedvalues));
 
         $this->add_action_buttons(true, get_string('confirmsectionselect', 'block_massaction'));
+    }
+
+    /**
+     * Check if the option should be allowed.
+     * @param bool $allowcondition the condition to allow the option
+     * @param int $optionnumber the option number
+     * @param array $attributes the attributes
+     * @return void
+     */
+    private function is_allowed(bool $allowcondition, int $optionnumber, array &$attributes): void {
+        if (!$allowcondition) {
+            $attributes['disabled'] = 'disabled';
+        } else {
+            // Allow user to add new section.
+            unset($attributes['disabled']);
+            $this->allowedvalues[] = "$optionnumber";
+        }
+    }
+
+    /**
+     * Validate the form.
+     *
+     * @param array $data the form data
+     * @param array $files the form files
+     * @return array the errors
+     */
+    public function validation($data, $files) {
+        $errors = parent::validation($data, $files);
+        if (!isset($data['targetsectionnum']) || !in_array($data['targetsectionnum'], $this->allowedvalues)) {
+            $errors['sections'] = get_string('invalidsectionnum', 'block_massaction');
+        }
+        return $errors;
     }
 }

@@ -166,6 +166,26 @@ class massactionutils {
     }
 
     /**
+     * Run callback function from a course format plugin.
+     *
+     * @param int $courseid the target course id
+     * @param string $format the course format
+     * @param string $callbackname the name of the callback function
+     * @return mixed|null none determined return type
+     */
+    private static function run_course_format_callback(int $courseid, string $format, string$callbackname) {
+        // Find course format which has the callback function.
+        $callbacks = get_plugins_with_function($callbackname);
+        if (!empty($callbacks['format'][$format])) {
+            // Run the callback function, and return result.
+            return $callbacks['format'][$format]($courseid);
+        }
+
+        // Return null if there is no callback function.
+        return null;
+    }
+
+    /**
      * Get array of restricted sections from course format callback.
      * Example return values from pluginname_massaction_restricted_sections: [1, 3, 5]
      *
@@ -173,12 +193,43 @@ class massactionutils {
      * @param string $format
      * @return array
      */
-    public static function get_restricted_sections($courseid, $format): array {
-        $sectionsrestricted = [];
-        $callbacks = get_plugins_with_function('massaction_restricted_sections');
-        if (!empty($callbacks['format'][$format])) {
-            $sectionsrestricted = $callbacks['format'][$format]($courseid);
-        }
-        return $sectionsrestricted;
+    public static function get_restricted_sections(int $courseid, string $format): array {
+        $sectionsrestricted = self::run_course_format_callback($courseid, $format,
+            'massaction_restricted_sections');
+
+        // Return empty array if there is no callback function.
+        return $sectionsrestricted ?? [];
+    }
+
+    /**
+     * Check if the target course format allow to add new sections.
+     *
+     * @param int $courseid the target course id
+     * @param string $format the course format
+     * @return bool default is true
+     */
+    public static function can_add_section(int $courseid, string $format): bool {
+        // Check if the course format allows to add new sections.
+        $canaddsection = self::run_course_format_callback($courseid, $format,
+            'massaction_can_add_section');
+
+        // The course format take precedence over the capability.
+        return $canaddsection ?? has_capability('moodle/course:update', \context_course::instance($courseid));
+    }
+
+    /**
+     * Check if the target course format allow to keep original section number.
+     *
+     * @param int $courseid the target course id
+     * @param string $format the course format
+     * @return bool default is true
+     */
+    public static function can_keep_original_section_number(int $courseid, string $format): bool {
+        // Check if the course format allows to keep original section number.
+        $cankeepsectionnumbers = self::run_course_format_callback($courseid, $format,
+            'massaction_can_keep_original_section_number');
+
+        // Return true if there is no callback function.
+        return $cankeepsectionnumbers ?? true;
     }
 }
